@@ -5,8 +5,11 @@ import android.app.AlertDialog;
 import android.app.DownloadManager;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.ShortcutInfo;
+import android.content.pm.ShortcutManager;
 import android.graphics.Bitmap;
 import android.graphics.Color;
+import android.graphics.drawable.Icon;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -15,7 +18,6 @@ import android.text.InputType;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.KeyEvent;
-import android.view.View;
 import android.view.ViewGroup;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputConnection;
@@ -229,6 +231,7 @@ public class ZionAubeBrowserMainActivity extends Activity {
     private void navigateFromInput() {
         String raw = urlInput.getText().toString().trim();
         if (raw.isEmpty()) return;
+        urlInput.clearFocus();
         hideKeyboard();
 
         String target;
@@ -247,6 +250,7 @@ public class ZionAubeBrowserMainActivity extends Activity {
         if (currentTab >= 0 && currentTab < tabs.size()) {
             TabEntry tab = tabs.get(currentTab);
             tab.url = target;
+            urlInput.setText(target);
             tab.webView.loadUrl(target);
         } else {
             addNewTab(target, false, true);
@@ -262,6 +266,7 @@ public class ZionAubeBrowserMainActivity extends Activity {
                 "Tabs (" + tabs.size() + ")",
                 "Refresh",
                 "Share",
+                "Add to Home Screen",
                 desktopLabel
         };
 
@@ -282,12 +287,47 @@ public class ZionAubeBrowserMainActivity extends Activity {
                             shareCurrentUrl();
                             break;
                         case 4:
+                            pinCurrentPageToHomeScreen();
+                            break;
+                        case 5:
                             toggleDesktopMode();
                             break;
                     }
                 })
                 .setNegativeButton("Close", null)
                 .show();
+    }
+
+    private void pinCurrentPageToHomeScreen() {
+        if (currentTab < 0 || currentTab >= tabs.size()) return;
+        TabEntry active = tabs.get(currentTab);
+        String pageUrl = (active.webView != null && active.webView.getUrl() != null)
+                ? active.webView.getUrl()
+                : active.url;
+        if (pageUrl == null || pageUrl.isEmpty()) return;
+
+        String label = (active.title != null && !active.title.trim().isEmpty())
+                ? active.title.trim()
+                : pageUrl;
+        if (label.length() > 30) label = label.substring(0, 30);
+
+        ShortcutManager sm = getSystemService(ShortcutManager.class);
+        if (sm != null && sm.isRequestPinShortcutSupported()) {
+            Intent launchIntent = new Intent(this, ZionAubeBrowserMainActivity.class);
+            launchIntent.setAction(Intent.ACTION_VIEW);
+            launchIntent.setData(Uri.parse(pageUrl));
+
+            ShortcutInfo info = new ShortcutInfo.Builder(this, "bloatless_" + pageUrl.hashCode())
+                    .setShortLabel(label)
+                    .setLongLabel(label)
+                    .setIcon(Icon.createWithResource(this, getApplicationInfo().icon))
+                    .setIntent(launchIntent)
+                    .build();
+
+            sm.requestPinShortcut(info, null);
+        } else {
+            Toast.makeText(this, "Home screen shortcuts not supported by launcher", Toast.LENGTH_SHORT).show();
+        }
     }
 
     private void showTabSwitcher() {
@@ -424,12 +464,18 @@ public class ZionAubeBrowserMainActivity extends Activity {
 
             @Override
             public void onPageStarted(WebView view, String url, Bitmap favicon) {
-                updateTabMetadata(view, url, null);
+                updateTabMetadata(view, url, null, true);
+            }
+
+            @Override
+            public void doUpdateVisitedHistory(WebView view, String url, boolean isReload) {
+                super.doUpdateVisitedHistory(view, url, isReload);
+                updateTabMetadata(view, url, null, true);
             }
 
             @Override
             public void onPageFinished(WebView view, String url) {
-                updateTabMetadata(view, url, view.getTitle());
+                updateTabMetadata(view, url, view.getTitle(), true);
                 String sdrHookJs =
                         "(function(){" +
                         "  var inputs = document.querySelectorAll('input');" +
@@ -474,7 +520,7 @@ public class ZionAubeBrowserMainActivity extends Activity {
         wv.setWebChromeClient(new WebChromeClient() {
             @Override
             public void onReceivedTitle(WebView view, String title) {
-                updateTabMetadata(view, view.getUrl(), title);
+                updateTabMetadata(view, view.getUrl(), title, false);
             }
 
             @Override
@@ -534,14 +580,16 @@ public class ZionAubeBrowserMainActivity extends Activity {
         return -1;
     }
 
-    private void updateTabMetadata(WebView view, String url, String title) {
+    private void updateTabMetadata(WebView view, String url, String title, boolean forceUrlBarSync) {
         int idx = findTabIndexByWebView(view);
         if (idx < 0) return;
         TabEntry entry = tabs.get(idx);
         if (url != null && !url.isEmpty()) entry.url = url;
         if (title != null && !title.isEmpty()) entry.title = title;
-        if (idx == currentTab && url != null && !urlInput.hasFocus()) {
-            urlInput.setText(url);
+        if (idx == currentTab && url != null && !url.isEmpty() && (forceUrlBarSync || !urlInput.hasFocus())) {
+            if (!url.equals(urlInput.getText().toString())) {
+                urlInput.setText(url);
+            }
         }
     }
 
