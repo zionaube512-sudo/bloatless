@@ -1,23 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Source & Architecture by Zion Aube (ZionOB) | Application Name: Bloatless -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.zionaube.bloatless.browser"
-    android:versionCode="2"
-    android:versionName="1.1-ZionAube">
-
+    android:versionCode="3"
+    android:versionName="1.2-ZionAube">
     <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="36" />
     <uses-permission android:name="android.permission.INTERNET" />
-
-    <application
-        android:label="Bloatless"
-        android:name=".ZionAubeBloatlessApplication"
-        android:usesCleartextTraffic="true">
-        <activity
-            android:name=".ZionAubeBrowserMainActivity"
-            android:label="@string/zion_aube_engine_label"
-            android:exported="true"
-            android:configChanges="orientation|screenSize|keyboardHidden"
-            android:windowSoftInputMode="adjustResize">
+    <application android:label="Bloatless" android:name=".ZionAubeBloatlessApplication" android:usesCleartextTraffic="true">
+        <activity android:name=".ZionAubeBrowserMainActivity" android:label="@string/zion_aube_engine_label" android:exported="true" android:configChanges="orientation|screenSize|keyboardHidden" android:windowSoftInputMode="adjustResize">
             <intent-filter android:label="@string/zion_aube_engine_label">
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -30,9 +19,6 @@
                 <data android:scheme="https" />
             </intent-filter>
         </activity>
-        <service
-            android:name=".ZionAubeTabBackgroundService"
-            android:label="@string/zion_aube_service_label"
-            android:exported="false" />
+        <service android:name=".ZionAubeTabBackgroundService" android:label="@string/zion_aube_service_label" android:exported="false" />
     </application>
 </manifest>
