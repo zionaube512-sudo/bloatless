@@ -1,360 +1,601 @@
 package com.zionaube.bloatless.browser;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.app.DownloadManager;
+import android.content.Context;
 import android.content.Intent;
+import android.graphics.Bitmap;
 import android.graphics.Color;
-import android.graphics.Typeface;
-import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
 import android.text.InputType;
+import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
-import android.view.WindowInsets;
 import android.view.inputmethod.EditorInfo;
+import android.view.inputmethod.InputConnection;
 import android.view.inputmethod.InputMethodManager;
 import android.webkit.CookieManager;
+import android.webkit.DownloadListener;
+import android.webkit.RenderProcessGoneDetail;
 import android.webkit.URLUtil;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
+import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.FrameLayout;
-import android.widget.HorizontalScrollView;
 import android.widget.LinearLayout;
-import android.widget.TextView;
 import android.widget.Toast;
+import android.window.OnBackInvokedCallback;
+import android.window.OnBackInvokedDispatcher;
+
+import java.net.URLEncoder;
 import java.util.ArrayList;
+import java.util.List;
 
 public class ZionAubeBrowserMainActivity extends Activity {
-    private static final String DESKTOP_UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
-    private static final String HOME_URL = "https://duckduckgo.com";
-    private static final String TOP_BANNER_TEXT = "Made by Zion Aube";
-    private static final int FILE_CHOOSER_REQUEST = 4091;
+
+    private static final int FILE_CHOOSER_REQUEST_CODE = 1001;
+    private static final String DEFAULT_HOME = "https://www.google.com";
+    private static final String DESKTOP_UA =
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+
+    private static class TabEntry {
+        WebView webView;
+        String url;
+        String title;
+        boolean desktopMode;
+
+        TabEntry(WebView webView, String url, boolean desktopMode) {
+            this.webView = webView;
+            this.url = url;
+            this.title = url;
+            this.desktopMode = desktopMode;
+        }
+    }
+
+    private static class SdrWebView extends WebView {
+        public SdrWebView(Context context) {
+            super(context);
+        }
+
+        @Override
+        public InputConnection onCreateInputConnection(EditorInfo outAttrs) {
+            InputConnection ic = super.onCreateInputConnection(outAttrs);
+            if (outAttrs != null) {
+                int action = outAttrs.imeOptions & EditorInfo.IME_MASK_ACTION;
+                if (action == EditorInfo.IME_ACTION_NEXT || action == EditorInfo.IME_ACTION_NONE) {
+                    outAttrs.imeOptions = (outAttrs.imeOptions & ~EditorInfo.IME_MASK_ACTION)
+                            | EditorInfo.IME_ACTION_GO;
+                }
+                outAttrs.imeOptions &= ~EditorInfo.IME_FLAG_NO_ENTER_ACTION;
+            }
+            return ic;
+        }
+    }
+
+    private final List<TabEntry> tabs = new ArrayList<>();
+    private int currentTab = -1;
 
     private EditText urlInput;
-    private Button desktopBtn;
-    private LinearLayout tabBar;
+    private Button menuButton;
     private FrameLayout webContainer;
-    private ValueCallback<Uri[]> filePathCallback;
 
-    private final ArrayList<WebView> tabs = new ArrayList<>();
-    private final ArrayList<Boolean> desktopModes = new ArrayList<>();
-    private int currentTab = -1;
-    private String defaultMobileUA;
+    private ValueCallback<Uri[]> filePathCallback;
+    private OnBackInvokedCallback backCallback;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        setTitle("Zion Aube Browser Window");
-        try { startService(new Intent(this, ZionAubeTabBackgroundService.class)); } catch (Exception ignored) {}
 
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(Color.parseColor("#111317"));
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            root.setOnApplyWindowInsetsListener((v, insets) -> {
-                android.graphics.Insets sys = insets.getInsets(WindowInsets.Type.systemBars() | WindowInsets.Type.ime());
-                v.setPadding(sys.left, sys.top, sys.right, sys.bottom);
-                return insets;
-            });
-        }
-
-        TextView bannerView = new TextView(this);
-        bannerView.setText(TOP_BANNER_TEXT);
-        bannerView.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
-        bannerView.setTextColor(Color.parseColor("#9AA5B4"));
-        bannerView.setBackgroundColor(Color.parseColor("#15181E"));
-        bannerView.setTextSize(11.5f);
-        bannerView.setTypeface(Typeface.DEFAULT, Typeface.ITALIC);
-        bannerView.setPadding(16, 7, 16, 7);
-        root.addView(bannerView, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        root.setBackgroundColor(Color.parseColor("#121212"));
+        root.setFitsSystemWindows(true);
 
         LinearLayout topBar = new LinearLayout(this);
         topBar.setOrientation(LinearLayout.HORIZONTAL);
         topBar.setGravity(Gravity.CENTER_VERTICAL);
-        topBar.setPadding(12, 8, 12, 8);
-        topBar.setBackgroundColor(Color.parseColor("#1B1F27"));
+        topBar.setBackgroundColor(Color.parseColor("#1E1E1E"));
+        int pad = dp(8);
+        topBar.setPadding(pad, pad, pad, pad);
 
         urlInput = new EditText(this);
-        urlInput.setHint("Search or enter URL");
-        urlInput.setHintTextColor(Color.parseColor("#7E8794"));
-        urlInput.setTextColor(Color.parseColor("#F3F6FA"));
-        urlInput.setBackground(makeRoundedBg(Color.parseColor("#282E3A"), Color.parseColor("#3B4352"), 18f, 1));
-        urlInput.setPadding(24, 14, 20, 14);
+        urlInput.setHint("Search Google or enter URL");
+        urlInput.setHintTextColor(Color.parseColor("#9E9E9E"));
+        urlInput.setTextColor(Color.WHITE);
+        urlInput.setBackgroundColor(Color.parseColor("#2C2C2C"));
         urlInput.setSingleLine(true);
-        urlInput.setTextSize(14f);
         urlInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
         urlInput.setImeOptions(EditorInfo.IME_ACTION_GO);
-        urlInput.setSelectAllOnFocus(true);
+        urlInput.setContentDescription("Address and Google search bar");
+        int inputPadH = dp(12);
+        int inputPadV = dp(10);
+        urlInput.setPadding(inputPadH, inputPadV, inputPadH, inputPadV);
+        urlInput.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+        LinearLayout.LayoutParams urlParams = new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        urlParams.setMarginEnd(dp(8));
+        topBar.addView(urlInput, urlParams);
+
+        menuButton = new Button(this);
+        menuButton.setText("Menu");
+        menuButton.setContentDescription("Browser Menu");
+        menuButton.setTextColor(Color.WHITE);
+        menuButton.setBackgroundColor(Color.parseColor("#333333"));
+        menuButton.setPadding(dp(14), dp(10), dp(14), dp(10));
+        menuButton.setMinimumWidth(dp(64));
+        menuButton.setMinimumHeight(dp(48));
+        menuButton.setOnClickListener(v -> showMainMenu());
+        topBar.addView(menuButton, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        root.addView(topBar, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        webContainer = new FrameLayout(this);
+        root.addView(webContainer, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+
+        setContentView(root);
+
         urlInput.setOnEditorActionListener((v, actionId, event) -> {
-            if (actionId == EditorInfo.IME_ACTION_GO || (event != null && event.getKeyCode() == KeyEvent.KEYCODE_ENTER)) {
-                loadFromBar();
+            if (actionId == EditorInfo.IME_ACTION_GO
+                    || actionId == EditorInfo.IME_ACTION_SEARCH
+                    || actionId == EditorInfo.IME_ACTION_DONE
+                    || (event != null && event.getKeyCode() == KeyEvent.KEYCODE_ENTER
+                    && event.getAction() == KeyEvent.ACTION_DOWN)) {
+                navigateFromInput();
                 return true;
             }
             return false;
         });
 
-        LinearLayout.LayoutParams urlParams = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.0f);
-        urlParams.setMargins(0, 0, 8, 0);
-        topBar.addView(urlInput, urlParams);
+        registerBackHandler();
 
-        Button goBtn = makeActionButton("Go", Color.parseColor("#2B3240"), Color.parseColor("#3E4759"), 8);
-        goBtn.setOnClickListener(v -> loadFromBar());
-        topBar.addView(goBtn);
-
-        desktopBtn = makeActionButton("PC", Color.parseColor("#2B3240"), Color.parseColor("#3E4759"), 8);
-        desktopBtn.setOnClickListener(v -> toggleDesktopMode());
-        topBar.addView(desktopBtn);
-
-        Button newTabBtn = makeActionButton("+", Color.parseColor("#2B3240"), Color.parseColor("#3E4759"), 0);
-        newTabBtn.setOnClickListener(v -> addNewTab(HOME_URL));
-        topBar.addView(newTabBtn);
-
-        root.addView(topBar);
-
-        HorizontalScrollView tabScroll = new HorizontalScrollView(this);
-        tabScroll.setHorizontalScrollBarEnabled(false);
-        tabScroll.setBackgroundColor(Color.parseColor("#15181E"));
-        tabBar = new LinearLayout(this);
-        tabBar.setOrientation(LinearLayout.HORIZONTAL);
-        tabBar.setPadding(12, 6, 12, 8);
-        tabScroll.addView(tabBar);
-        root.addView(tabScroll);
-
-        View divider = new View(this);
-        divider.setBackgroundColor(Color.parseColor("#2A303C"));
-        root.addView(divider, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 2));
-
-        webContainer = new FrameLayout(this);
-        root.addView(webContainer, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1.0f));
-        setContentView(root);
-
-        String initialUrl = HOME_URL;
-        Intent intent = getIntent();
-        if (intent != null && Intent.ACTION_VIEW.equals(intent.getAction()) && intent.getData() != null) {
-            initialUrl = intent.getData().toString();
-        }
-        addNewTab(initialUrl);
-    }
-
-    private GradientDrawable makeRoundedBg(int fillColor, int strokeColor, float radiusPx, int strokeWidthPx) {
-        GradientDrawable gd = new GradientDrawable();
-        gd.setShape(GradientDrawable.RECTANGLE);
-        gd.setColor(fillColor);
-        gd.setCornerRadius(radiusPx);
-        if (strokeWidthPx > 0) gd.setStroke(strokeWidthPx, strokeColor);
-        return gd;
-    }
-
-    private Button makeActionButton(String label, int fillColor, int strokeColor, int rightMargin) {
-        Button b = new Button(this);
-        b.setText(label);
-        b.setTextColor(Color.parseColor("#F3F6FA"));
-        b.setTextSize(13f);
-        b.setTypeface(Typeface.DEFAULT_BOLD);
-        b.setBackground(makeRoundedBg(fillColor, strokeColor, 16f, 1));
-        b.setMinWidth(0); b.setMinimumWidth(0); b.setMinHeight(0); b.setMinimumHeight(0);
-        b.setPadding(20, 12, 20, 12);
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        lp.setMargins(0, 0, rightMargin, 0);
-        b.setLayoutParams(lp);
-        return b;
-    }
-
-    private void addNewTab(String url) {
-        WebView wv;
-        try {
-            wv = new WebView(this);
-        } catch (Throwable err) {
-            TextView fallback = new TextView(this);
-            fallback.setText("System WebView not available on this device.");
-            fallback.setTextColor(Color.WHITE);
-            fallback.setPadding(24, 24, 24, 24);
-            webContainer.removeAllViews();
-            webContainer.addView(fallback);
-            return;
-        }
-
-        WebSettings ws = wv.getSettings();
-        ws.setJavaScriptEnabled(true);
-        ws.setDomStorageEnabled(true);
-        ws.setAllowFileAccess(true);
-        ws.setSupportZoom(true);
-        ws.setBuiltInZoomControls(true);
-        ws.setDisplayZoomControls(false);
-        ws.setUseWideViewPort(true);
-        ws.setLoadWithOverviewMode(true);
-        if (defaultMobileUA == null) defaultMobileUA = ws.getUserAgentString();
-
-        wv.setWebViewClient(new WebViewClient() {
-            @Override
-            public void onPageFinished(WebView view, String loadedUrl) {
-                if (tabs.indexOf(view) == currentTab && !urlInput.hasFocus()) urlInput.setText(loadedUrl);
-                refreshTabStrip();
-            }
-        });
-
-        wv.setWebChromeClient(new WebChromeClient() {
-            @Override
-            public void onReceivedTitle(WebView view, String title) { refreshTabStrip(); }
-
-            @Override
-            public boolean onShowFileChooser(WebView webView, ValueCallback<Uri[]> callback, FileChooserParams params) {
-                if (filePathCallback != null) filePathCallback.onReceiveValue(null);
-                filePathCallback = callback;
-                Intent chooserIntent = new Intent(Intent.ACTION_GET_CONTENT);
-                chooserIntent.addCategory(Intent.CATEGORY_OPENABLE);
-                String[] types = params.getAcceptTypes();
-                String mime = (types != null && types.length > 0 && types[0] != null && !types[0].isEmpty()) ? types[0] : "*/*";
-                chooserIntent.setType(mime);
-                if (params.getMode() == FileChooserParams.MODE_OPEN_MULTIPLE) chooserIntent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
-                try {
-                    startActivityForResult(Intent.createChooser(chooserIntent, "Select photo or file"), FILE_CHOOSER_REQUEST);
-                    return true;
-                } catch (Exception e) {
-                    filePathCallback.onReceiveValue(null);
-                    filePathCallback = null;
-                    Toast.makeText(ZionAubeBrowserMainActivity.this, "No file picker available", Toast.LENGTH_SHORT).show();
-                    return false;
+        if (savedInstanceState != null && savedInstanceState.containsKey("tab_urls")) {
+            ArrayList<String> savedUrls = savedInstanceState.getStringArrayList("tab_urls");
+            boolean[] savedDesktop = savedInstanceState.getBooleanArray("tab_desktop");
+            int savedIndex = savedInstanceState.getInt("current_tab", 0);
+            if (savedUrls != null && !savedUrls.isEmpty()) {
+                for (int i = 0; i < savedUrls.size(); i++) {
+                    boolean desk = savedDesktop != null && i < savedDesktop.length && savedDesktop[i];
+                    addNewTab(savedUrls.get(i), desk, false);
                 }
+                switchToTab(Math.max(0, Math.min(savedIndex, tabs.size() - 1)));
+            } else {
+                addNewTab(resolveIncomingUrl(getIntent()), false, true);
             }
-        });
-
-        wv.setDownloadListener((downloadUrl, userAgent, contentDisposition, mimetype, contentLength) -> {
-            try {
-                String fileName = URLUtil.guessFileName(downloadUrl, contentDisposition, mimetype);
-                DownloadManager.Request req = new DownloadManager.Request(Uri.parse(downloadUrl));
-                if (userAgent != null && !userAgent.isEmpty()) req.addRequestHeader("User-Agent", userAgent);
-                String cookies = CookieManager.getInstance().getCookie(downloadUrl);
-                if (cookies != null && !cookies.isEmpty()) req.addRequestHeader("Cookie", cookies);
-                if (mimetype != null && !mimetype.isEmpty()) req.setMimeType(mimetype);
-                req.setTitle(fileName);
-                req.setDescription("Downloading via Bloatless");
-                req.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
-                req.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName);
-                DownloadManager dm = (DownloadManager) getSystemService(DOWNLOAD_SERVICE);
-                if (dm != null) {
-                    dm.enqueue(req);
-                    Toast.makeText(this, "Downloading " + fileName, Toast.LENGTH_SHORT).show();
-                }
-            } catch (Exception e) {
-                Toast.makeText(this, "Download failed: " + e.getMessage(), Toast.LENGTH_SHORT).show();
-            }
-        });
-
-        tabs.add(wv);
-        desktopModes.add(false);
-        switchToTab(tabs.size() - 1);
-        wv.loadUrl(url);
+        } else {
+            addNewTab(resolveIncomingUrl(getIntent()), false, true);
+        }
     }
 
     @Override
-    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
-        super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode != FILE_CHOOSER_REQUEST || filePathCallback == null) return;
-        Uri[] results = null;
-        if (resultCode == RESULT_OK && data != null) {
-            if (data.getClipData() != null) {
-                int count = data.getClipData().getItemCount();
-                results = new Uri[count];
-                for (int i = 0; i < count; i++) results[i] = data.getClipData().getItemAt(i).getUri();
-            } else if (data.getData() != null) {
-                results = new Uri[] { data.getData() };
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        String incoming = resolveIncomingUrl(intent);
+        if (incoming != null && !incoming.equals(DEFAULT_HOME)) {
+            addNewTab(incoming, false, true);
+        }
+    }
+
+    private String resolveIncomingUrl(Intent intent) {
+        if (intent != null && Intent.ACTION_VIEW.equals(intent.getAction()) && intent.getDataString() != null) {
+            return intent.getDataString();
+        }
+        return DEFAULT_HOME;
+    }
+
+    private void registerBackHandler() {
+        if (Build.VERSION.SDK_INT >= 33) {
+            backCallback = this::handleBackNavigation;
+            getOnBackInvokedDispatcher().registerOnBackInvokedCallback(
+                    OnBackInvokedDispatcher.PRIORITY_DEFAULT, backCallback);
+        }
+    }
+
+    @Override
+    @SuppressWarnings("deprecation")
+    public void onBackPressed() {
+        handleBackNavigation();
+    }
+
+    private void handleBackNavigation() {
+        if (currentTab >= 0 && currentTab < tabs.size()) {
+            WebView wv = tabs.get(currentTab).webView;
+            if (wv != null && wv.canGoBack()) {
+                wv.goBack();
+                return;
             }
         }
-        filePathCallback.onReceiveValue(results);
-        filePathCallback = null;
+        if (tabs.size() > 1) {
+            closeTab(currentTab);
+            return;
+        }
+        finish();
+    }
+
+    private void navigateFromInput() {
+        String raw = urlInput.getText().toString().trim();
+        if (raw.isEmpty()) return;
+        hideKeyboard();
+
+        String target;
+        if (raw.startsWith("http://") || raw.startsWith("https://") || raw.startsWith("chrome://")) {
+            target = raw;
+        } else if (!raw.contains(" ") && raw.contains(".")) {
+            target = "https://" + raw;
+        } else {
+            try {
+                target = "https://www.google.com/search?q=" + URLEncoder.encode(raw, "UTF-8");
+            } catch (Exception e) {
+                target = "https://www.google.com/search?q=" + raw.replace(" ", "+");
+            }
+        }
+
+        if (currentTab >= 0 && currentTab < tabs.size()) {
+            TabEntry tab = tabs.get(currentTab);
+            tab.url = target;
+            tab.webView.loadUrl(target);
+        } else {
+            addNewTab(target, false, true);
+        }
+    }
+
+    private void showMainMenu() {
+        if (tabs.isEmpty()) return;
+        TabEntry active = tabs.get(currentTab);
+        String desktopLabel = active.desktopMode ? "Desktop Mode: On (Switch to Mobile)" : "Desktop Mode: Off (Switch to Desktop)";
+        String[] items = new String[]{
+                "New Tab",
+                "Tabs (" + tabs.size() + ")",
+                "Refresh",
+                "Share",
+                desktopLabel
+        };
+
+        new AlertDialog.Builder(this)
+                .setTitle("Bloatless Menu")
+                .setItems(items, (dialog, which) -> {
+                    switch (which) {
+                        case 0:
+                            addNewTab(DEFAULT_HOME, false, true);
+                            break;
+                        case 1:
+                            showTabSwitcher();
+                            break;
+                        case 2:
+                            if (active.webView != null) active.webView.reload();
+                            break;
+                        case 3:
+                            shareCurrentUrl();
+                            break;
+                        case 4:
+                            toggleDesktopMode();
+                            break;
+                    }
+                })
+                .setNegativeButton("Close", null)
+                .show();
+    }
+
+    private void showTabSwitcher() {
+        if (tabs.isEmpty()) return;
+        String[] labels = new String[tabs.size()];
+        for (int i = 0; i < tabs.size(); i++) {
+            TabEntry t = tabs.get(i);
+            String prefix = (i == currentTab) ? "[Active] " : "";
+            String name = (t.title != null && !t.title.trim().isEmpty()) ? t.title : t.url;
+            labels[i] = prefix + "Tab " + (i + 1) + ": " + name;
+        }
+
+        new AlertDialog.Builder(this)
+                .setTitle("Open Tabs (" + tabs.size() + ")")
+                .setItems(labels, (dialog, which) -> switchToTab(which))
+                .setPositiveButton("New Tab", (d, w) -> addNewTab(DEFAULT_HOME, false, true))
+                .setNeutralButton("Close Current Tab", (d, w) -> closeTab(currentTab))
+                .setNegativeButton("Cancel", null)
+                .show();
+    }
+
+    private void shareCurrentUrl() {
+        if (currentTab < 0 || currentTab >= tabs.size()) return;
+        TabEntry active = tabs.get(currentTab);
+        String shareUrl = (active.webView != null && active.webView.getUrl() != null)
+                ? active.webView.getUrl()
+                : active.url;
+        if (shareUrl == null || shareUrl.isEmpty()) return;
+
+        Intent sendIntent = new Intent(Intent.ACTION_SEND);
+        sendIntent.setType("text/plain");
+        sendIntent.putExtra(Intent.EXTRA_TEXT, shareUrl);
+        startActivity(Intent.createChooser(sendIntent, "Share link"));
+    }
+
+    private void toggleDesktopMode() {
+        if (currentTab < 0 || currentTab >= tabs.size()) return;
+        TabEntry active = tabs.get(currentTab);
+        active.desktopMode = !active.desktopMode;
+        applyDesktopSettings(active.webView.getSettings(), active.desktopMode);
+        active.webView.reload();
+        Toast.makeText(this, active.desktopMode ? "Desktop Mode On" : "Mobile Mode On", Toast.LENGTH_SHORT).show();
+    }
+
+    private void applyDesktopSettings(WebSettings ws, boolean desktop) {
+        ws.setUserAgentString(desktop ? DESKTOP_UA : null);
+        ws.setUseWideViewPort(desktop);
+        ws.setLoadWithOverviewMode(desktop);
+    }
+
+    private void addNewTab(String url, boolean desktopMode, boolean switchNow) {
+        WebView wv = createConfiguredWebView(desktopMode);
+        TabEntry entry = new TabEntry(wv, url, desktopMode);
+        tabs.add(entry);
+        int newIndex = tabs.size() - 1;
+        if (switchNow) {
+            switchToTab(newIndex);
+        }
+        wv.loadUrl(url);
     }
 
     private void switchToTab(int index) {
         if (index < 0 || index >= tabs.size()) return;
         currentTab = index;
         webContainer.removeAllViews();
-        WebView active = tabs.get(currentTab);
-        webContainer.addView(active, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-        String currentUrl = active.getUrl();
-        urlInput.setText(currentUrl != null ? currentUrl : "");
-        updateDesktopVisual();
-        refreshTabStrip();
+        TabEntry active = tabs.get(currentTab);
+        if (active.webView.getParent() instanceof ViewGroup) {
+            ((ViewGroup) active.webView.getParent()).removeView(active.webView);
+        }
+        webContainer.addView(active.webView, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        urlInput.setText(active.url != null ? active.url : "");
+        menuButton.setContentDescription("Browser Menu, " + tabs.size() + " open tabs");
     }
 
     private void closeTab(int index) {
-        if (tabs.size() <= 1) { tabs.get(0).loadUrl(HOME_URL); return; }
-        WebView closing = tabs.remove(index);
-        desktopModes.remove(index);
-        closing.destroy();
-        if (currentTab >= tabs.size()) currentTab = tabs.size() - 1;
+        if (index < 0 || index >= tabs.size()) return;
+        TabEntry removed = tabs.remove(index);
+        if (removed.webView != null) {
+            if (removed.webView.getParent() instanceof ViewGroup) {
+                ((ViewGroup) removed.webView.getParent()).removeView(removed.webView);
+            }
+            removed.webView.stopLoading();
+            removed.webView.destroy();
+        }
+
+        if (tabs.isEmpty()) {
+            currentTab = -1;
+            addNewTab(DEFAULT_HOME, false, true);
+            return;
+        }
+
+        if (index < currentTab) {
+            currentTab--;
+        } else if (currentTab >= tabs.size()) {
+            currentTab = tabs.size() - 1;
+        }
         switchToTab(currentTab);
     }
 
-    private void refreshTabStrip() {
-        tabBar.removeAllViews();
+    private WebView createConfiguredWebView(boolean desktopMode) {
+        SdrWebView wv = new SdrWebView(this);
+        WebSettings ws = wv.getSettings();
+        ws.setJavaScriptEnabled(true);
+        ws.setDomStorageEnabled(true);
+        ws.setDatabaseEnabled(true);
+        ws.setAllowFileAccess(true);
+        ws.setAllowContentAccess(true);
+        ws.setSupportZoom(true);
+        ws.setBuiltInZoomControls(true);
+        ws.setDisplayZoomControls(false);
+        ws.setMediaPlaybackRequiresUserGesture(false);
+        ws.setMixedContentMode(WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE);
+        applyDesktopSettings(ws, desktopMode);
+
+        CookieManager.getInstance().setAcceptCookie(true);
+        CookieManager.getInstance().setAcceptThirdPartyCookies(wv, true);
+
+        wv.setWebViewClient(new WebViewClient() {
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                Uri uri = request.getUrl();
+                String scheme = uri != null ? uri.getScheme() : null;
+                if (scheme != null && !scheme.equals("http") && !scheme.equals("https")
+                        && !scheme.equals("about") && !scheme.equals("data") && !scheme.equals("blob")) {
+                    try {
+                        startActivity(new Intent(Intent.ACTION_VIEW, uri));
+                    } catch (Exception ignored) {
+                    }
+                    return true;
+                }
+                return false;
+            }
+
+            @Override
+            public void onPageStarted(WebView view, String url, Bitmap favicon) {
+                updateTabMetadata(view, url, null);
+            }
+
+            @Override
+            public void onPageFinished(WebView view, String url) {
+                updateTabMetadata(view, url, view.getTitle());
+                String sdrHookJs =
+                        "(function(){" +
+                        "  var inputs = document.querySelectorAll('input');" +
+                        "  inputs.forEach(function(el){" +
+                        "    if(!el.getAttribute('enterkeyhint')) el.setAttribute('enterkeyhint','go');" +
+                        "    if(!el.dataset.zionHooked){" +
+                        "      el.dataset.zionHooked='1';" +
+                        "      el.addEventListener('keydown',function(e){" +
+                        "        if(e.key==='Enter'||e.keyCode===13){" +
+                        "          el.dispatchEvent(new Event('change',{bubbles:true}));" +
+                        "        }" +
+                        "      });" +
+                        "    }" +
+                        "  });" +
+                        "})();";
+                view.evaluateJavascript(sdrHookJs, null);
+            }
+
+            @Override
+            public boolean onRenderProcessGone(WebView view, RenderProcessGoneDetail detail) {
+                int idx = findTabIndexByWebView(view);
+                String failedUrl = (idx >= 0) ? tabs.get(idx).url : DEFAULT_HOME;
+                boolean desk = (idx >= 0) && tabs.get(idx).desktopMode;
+                if (view.getParent() instanceof ViewGroup) {
+                    ((ViewGroup) view.getParent()).removeView(view);
+                }
+                view.destroy();
+                if (idx >= 0) {
+                    WebView replacement = createConfiguredWebView(desk);
+                    tabs.get(idx).webView = replacement;
+                    if (idx == currentTab) {
+                        switchToTab(idx);
+                    }
+                    replacement.loadUrl(failedUrl);
+                }
+                Toast.makeText(ZionAubeBrowserMainActivity.this,
+                        "Tab renderer recovered", Toast.LENGTH_SHORT).show();
+                return true;
+            }
+        });
+
+        wv.setWebChromeClient(new WebChromeClient() {
+            @Override
+            public void onReceivedTitle(WebView view, String title) {
+                updateTabMetadata(view, view.getUrl(), title);
+            }
+
+            @Override
+            public boolean onShowFileChooser(WebView webView, ValueCallback<Uri[]> callback,
+                                             FileChooserParams fileChooserParams) {
+                if (filePathCallback != null) {
+                    filePathCallback.onReceiveValue(null);
+                }
+                filePathCallback = callback;
+                try {
+                    Intent intent = fileChooserParams.createIntent();
+                    startActivityForResult(intent, FILE_CHOOSER_REQUEST_CODE);
+                } catch (Exception e) {
+                    filePathCallback = null;
+                    Toast.makeText(ZionAubeBrowserMainActivity.this,
+                            "Unable to open file picker", Toast.LENGTH_SHORT).show();
+                    return false;
+                }
+                return true;
+            }
+        });
+
+        wv.setDownloadListener(new DownloadListener() {
+            @Override
+            public void onDownloadStart(String url, String userAgent, String contentDisposition,
+                                        String mimetype, long contentLength) {
+                try {
+                    DownloadManager.Request req = new DownloadManager.Request(Uri.parse(url));
+                    String filename = URLUtil.guessFileName(url, contentDisposition, mimetype);
+                    req.setTitle(filename);
+                    req.setDescription("Downloading via Bloatless");
+                    req.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+                    req.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, filename);
+                    String cookies = CookieManager.getInstance().getCookie(url);
+                    if (cookies != null) req.addRequestHeader("Cookie", cookies);
+                    if (userAgent != null) req.addRequestHeader("User-Agent", userAgent);
+                    DownloadManager dm = (DownloadManager) getSystemService(DOWNLOAD_SERVICE);
+                    if (dm != null) {
+                        dm.enqueue(req);
+                        Toast.makeText(ZionAubeBrowserMainActivity.this,
+                                "Downloading " + filename, Toast.LENGTH_SHORT).show();
+                    }
+                } catch (Exception e) {
+                    Toast.makeText(ZionAubeBrowserMainActivity.this,
+                            "Download failed: " + e.getMessage(), Toast.LENGTH_LONG).show();
+                }
+            }
+        });
+
+        return wv;
+    }
+
+    private int findTabIndexByWebView(WebView view) {
         for (int i = 0; i < tabs.size(); i++) {
-            final int idx = i;
-            WebView wv = tabs.get(i);
-            String title = wv.getTitle();
-            if (title == null || title.trim().isEmpty()) title = "Tab " + (i + 1);
-            if (title.length() > 16) title = title.substring(0, 16) + "…";
-            boolean active = (i == currentTab);
-            TextView tabChip = new TextView(this);
-            tabChip.setText(title + "  ✕");
-            tabChip.setTextSize(12.5f);
-            tabChip.setTypeface(Typeface.DEFAULT, active ? Typeface.BOLD : Typeface.NORMAL);
-            tabChip.setTextColor(active ? Color.parseColor("#0F172A") : Color.parseColor("#CBD5E1"));
-            tabChip.setBackground(makeRoundedBg(active ? Color.parseColor("#7DD3FC") : Color.parseColor("#232833"), active ? Color.parseColor("#38BDF8") : Color.parseColor("#343C4A"), 14f, 1));
-            tabChip.setPadding(20, 9, 20, 9);
-            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            lp.setMargins(0, 0, 10, 0);
-            tabChip.setLayoutParams(lp);
-            tabChip.setOnClickListener(v -> switchToTab(idx));
-            tabChip.setOnLongClickListener(v -> { closeTab(idx); return true; });
-            tabBar.addView(tabChip);
+            if (tabs.get(i).webView == view) return i;
+        }
+        return -1;
+    }
+
+    private void updateTabMetadata(WebView view, String url, String title) {
+        int idx = findTabIndexByWebView(view);
+        if (idx < 0) return;
+        TabEntry entry = tabs.get(idx);
+        if (url != null && !url.isEmpty()) entry.url = url;
+        if (title != null && !title.isEmpty()) entry.title = title;
+        if (idx == currentTab && url != null && !urlInput.hasFocus()) {
+            urlInput.setText(url);
         }
     }
 
-    private void loadFromBar() {
-        if (currentTab < 0) return;
-        String raw = urlInput.getText().toString().trim();
-        if (raw.isEmpty()) return;
-        String target = (raw.startsWith("http://") || raw.startsWith("https://")) ? raw : (!raw.contains(" ") && raw.contains(".")) ? "https://" + raw : "https://duckduckgo.com/?q=" + Uri.encode(raw);
-        urlInput.clearFocus();
-        InputMethodManager imm = (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
-        if (imm != null) imm.hideSoftInputFromWindow(urlInput.getWindowToken(), 0);
-        tabs.get(currentTab).loadUrl(target);
-    }
-
-    private void toggleDesktopMode() {
-        if (currentTab < 0) return;
-        boolean nextState = !desktopModes.get(currentTab);
-        desktopModes.set(currentTab, nextState);
-        WebView wv = tabs.get(currentTab);
-        WebSettings ws = wv.getSettings();
-        ws.setUserAgentString(nextState ? DESKTOP_UA : defaultMobileUA);
-        ws.setUseWideViewPort(true);
-        ws.setLoadWithOverviewMode(true);
-        updateDesktopVisual();
-        wv.reload();
-    }
-
-    private void updateDesktopVisual() {
-        boolean isDesktop = currentTab >= 0 && desktopModes.get(currentTab);
-        desktopBtn.setBackground(makeRoundedBg(isDesktop ? Color.parseColor("#1E6F50") : Color.parseColor("#2B3240"), isDesktop ? Color.parseColor("#34D399") : Color.parseColor("#3E4759"), 16f, 1));
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        if (requestCode == FILE_CHOOSER_REQUEST_CODE) {
+            if (filePathCallback != null) {
+                Uri[] results = WebChromeClient.FileChooserParams.parseResult(resultCode, data);
+                filePathCallback.onReceiveValue(results);
+                filePathCallback = null;
+            }
+            return;
+        }
+        super.onActivityResult(requestCode, resultCode, data);
     }
 
     @Override
-    public void onBackPressed() {
-        if (currentTab >= 0 && tabs.get(currentTab).canGoBack()) tabs.get(currentTab).goBack();
-        else if (tabs.size() > 1) closeTab(currentTab);
-        else super.onBackPressed();
+    protected void onSaveInstanceState(Bundle outState) {
+        super.onSaveInstanceState(outState);
+        ArrayList<String> urls = new ArrayList<>();
+        boolean[] desktopFlags = new boolean[tabs.size()];
+        for (int i = 0; i < tabs.size(); i++) {
+            TabEntry t = tabs.get(i);
+            urls.add(t.url != null ? t.url : DEFAULT_HOME);
+            desktopFlags[i] = t.desktopMode;
+        }
+        outState.putStringArrayList("tab_urls", urls);
+        outState.putBooleanArray("tab_desktop", desktopFlags);
+        outState.putInt("current_tab", currentTab);
+    }
+
+    @Override
+    protected void onDestroy() {
+        if (Build.VERSION.SDK_INT >= 33 && backCallback != null) {
+            getOnBackInvokedDispatcher().unregisterOnBackInvokedCallback(backCallback);
+        }
+        for (TabEntry t : tabs) {
+            if (t.webView != null) {
+                t.webView.destroy();
+            }
+        }
+        tabs.clear();
+        super.onDestroy();
+    }
+
+    private void hideKeyboard() {
+        InputMethodManager imm = (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
+        if (imm != null && urlInput != null) {
+            imm.hideSoftInputFromWindow(urlInput.getWindowToken(), 0);
+        }
+    }
+
+    private int dp(int value) {
+        return (int) TypedValue.applyDimension(
+                TypedValue.COMPLEX_UNIT_DIP, value, getResources().getDisplayMetrics());
     }
 }
