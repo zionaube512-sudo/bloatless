@@ -267,12 +267,21 @@ public class ZionAubeBrowserMainActivity extends Activity {
                 "Refresh",
                 "Share",
                 "Add to Home Screen",
-                desktopLabel
+        desktopLabel
         };
+        java.util.List<String> _bloatlessMenuList = new java.util.ArrayList<>(java.util.Arrays.asList(items));
+        if (shouldShowOpenInBloatless()) {
+            _bloatlessMenuList.add("Open in Bloatless");
+        }
+        final String[] menuItems = _bloatlessMenuList.toArray(new String[0]);
 
         new AlertDialog.Builder(this)
                 .setTitle("Bloatless Menu")
-                .setItems(items, (dialog, which) -> {
+                .setItems(menuItems, (dialog, which) -> {
+                        if (which >= 0 && which < menuItems.length && "Open in Bloatless".equals(menuItems[which])) {
+                            openInBloatless();
+                            return;
+                        }
                     switch (which) {
                         case 0:
                             addNewTab(DEFAULT_HOME, false, true);
@@ -645,5 +654,54 @@ public class ZionAubeBrowserMainActivity extends Activity {
     private int dp(int value) {
         return (int) TypedValue.applyDimension(
                 TypedValue.COMPLEX_UNIT_DIP, value, getResources().getDisplayMetrics());
+    }
+
+    private boolean shouldShowOpenInBloatless() {
+        try {
+            android.content.Intent cur = getIntent();
+            if (cur == null) return false;
+            boolean fromViewOrExternal = android.content.Intent.ACTION_VIEW.equals(cur.getAction())
+                    || cur.hasCategory(android.content.Intent.CATEGORY_BROWSABLE)
+                    || (cur.getFlags() & android.content.Intent.FLAG_ACTIVITY_NEW_TASK) != 0
+                    || cur.getBooleanExtra("launched_from_external", false);
+            String pkg = getPackageName();
+            String ref = null;
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP_MR1 && getReferrer() != null) {
+                ref = getReferrer().toString();
+            }
+            boolean externalReferrer = ref != null && pkg != null && !ref.contains("android-app://" + pkg);
+            return fromViewOrExternal || externalReferrer;
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+
+    private void openInBloatless() {
+        try {
+            String targetUrl = null;
+            for (java.lang.reflect.Field field : getClass().getDeclaredFields()) {
+                if (android.webkit.WebView.class.isAssignableFrom(field.getType())) {
+                    field.setAccessible(true);
+                    Object obj = field.get(this);
+                    if (obj instanceof android.webkit.WebView) {
+                        targetUrl = ((android.webkit.WebView) obj).getUrl();
+                        break;
+                    }
+                }
+            }
+            if ((targetUrl == null || targetUrl.trim().isEmpty()) && getIntent() != null && getIntent().getData() != null) {
+                targetUrl = getIntent().getData().toString();
+            }
+            android.content.Intent launchIntent = new android.content.Intent(this, ZionAubeBrowserMainActivity.class);
+            launchIntent.setAction(android.content.Intent.ACTION_VIEW);
+            if (targetUrl != null && !targetUrl.trim().isEmpty()) {
+                launchIntent.setData(android.net.Uri.parse(targetUrl));
+            }
+            launchIntent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK | android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP);
+            startActivity(launchIntent);
+        } catch (Throwable t) {
+            android.widget.Toast.makeText(this, "Unable to open in Floatless Browser", android.widget.Toast.LENGTH_SHORT).show();
+        }
     }
 }

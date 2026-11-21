@@ -5,7 +5,7 @@ import android.util.Log;
 
 /**
  * Title: Zion Aube Bloatless Application Controller
- * Author: Zion Aube (ZionOB)
+ * Author: Zion Aube (Zion Aube)
  */
 public class ZionAubeBloatlessApplication extends Application {
     public static final String ZION_AUBE_ENGINE_TITLE = "Zion Aube Chromium WebView Core";

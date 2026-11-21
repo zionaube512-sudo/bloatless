@@ -58,7 +58,7 @@ public class MainActivity extends Activity {
             });
         }
 
-        // Top branding bar: Bloatless + developed by ZionOB
+        // Top branding bar: Bloatless + developed by Zion Aube
         LinearLayout brandBar = new LinearLayout(this);
         brandBar.setOrientation(LinearLayout.HORIZONTAL);
         brandBar.setGravity(Gravity.CENTER_VERTICAL);
@@ -74,7 +74,7 @@ public class MainActivity extends Activity {
         ));
 
         TextView devView = new TextView(this);
-        devView.setText("developed by ZionOB");
+        devView.setText("developed by Zion Aube");
         devView.setTextColor(Color.parseColor("#90CAF9"));
         devView.setTextSize(12f);
         brandBar.addView(devView);
@@ -316,6 +316,34 @@ public class MainActivity extends Activity {
             closeTab(currentTab);
         } else {
             super.onBackPressed();
+        }
+    }
+
+    private void openInBloatless() {
+        try {
+            String targetUrl = null;
+            for (java.lang.reflect.Field field : getClass().getDeclaredFields()) {
+                if (android.webkit.WebView.class.isAssignableFrom(field.getType())) {
+                    field.setAccessible(true);
+                    Object obj = field.get(this);
+                    if (obj instanceof android.webkit.WebView) {
+                        targetUrl = ((android.webkit.WebView) obj).getUrl();
+                        break;
+                    }
+                }
+            }
+            if ((targetUrl == null || targetUrl.trim().isEmpty()) && getIntent() != null && getIntent().getData() != null) {
+                targetUrl = getIntent().getData().toString();
+            }
+            android.content.Intent launchIntent = new android.content.Intent(this, MainActivity.class);
+            launchIntent.setAction(android.content.Intent.ACTION_VIEW);
+            if (targetUrl != null && !targetUrl.trim().isEmpty()) {
+                launchIntent.setData(android.net.Uri.parse(targetUrl));
+            }
+            launchIntent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK | android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP);
+            startActivity(launchIntent);
+        } catch (Throwable t) {
+            android.widget.Toast.makeText(this, "Unable to open in Bloatless", android.widget.Toast.LENGTH_SHORT).show();
         }
     }
 }

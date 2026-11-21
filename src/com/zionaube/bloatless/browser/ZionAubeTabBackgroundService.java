@@ -7,7 +7,7 @@ import android.util.Log;
 
 /**
  * Title: Zion Aube Tab Manager Service
- * Author: Zion Aube (ZionOB)
+ * Author: Zion Aube (Zion Aube)
  */
 public class ZionAubeTabBackgroundService extends Service {
     public static final String ZION_AUBE_SERVICE_TITLE = "Zion Aube Tab Session Guard";

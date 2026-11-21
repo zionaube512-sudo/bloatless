@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="zion_aube_engine_label">Zion Aube Browser Engine</string>
+    <string name="zion_aube_engine_label">Bloatless</string>
     <string name="zion_aube_service_label">Zion Aube Tab Manager Service</string>
 </resources>
